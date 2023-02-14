@@ -1,5 +1,5 @@
 #include "rasterizer.h"
-
+#include <list>
 using namespace std;
 
 namespace CGL {
@@ -21,9 +21,10 @@ namespace CGL {
     // TODO: Task 2: You might need to this function to fix points and lines (such as the black rectangle border in test4.svg)
     // NOTE: You are not required to implement proper supersampling for points and lines
     // It is sufficient to use the same color for all supersamples of a pixel for points and lines (not triangles)
-
-
-    sample_buffer[y * width + x] = c;
+    // sample_buffer[y * width + x] = c;
+      for (int k = 0; k < 3; ++k) {
+          this->rgb_framebuffer_target[3 * (y * width + x) + k] = (&c.r)[k] * 255;
+      }
   }
 
   // Rasterize a point: simple example to help you start familiarizing
@@ -38,7 +39,10 @@ namespace CGL {
     if (sx < 0 || sx >= width) return;
     if (sy < 0 || sy >= height) return;
 
-    fill_pixel(sx, sy, color);
+    // fill_pixel(sx, sy, color);
+      for (int i = 0; i < sample_rate; ++i) {
+          sample_buffer[(sy * width + sx) * sample_rate + i] = color;
+      }
     return;
   }
 
@@ -65,18 +69,71 @@ namespace CGL {
     }
   }
 
+bool is_inside(float x, float y, float x0, float y0, float x1, float y1, float x2, float y2) {
+    // vertices of the triangle  point
+    Vector2D p = Vector2D(x, y);
+    Vector2D v1 = Vector2D(x0, y0);
+    Vector2D v2 = Vector2D(x1, y1);
+    Vector2D v3 = Vector2D(x2, y2);
+    // edges of the triangle
+    Vector2D e1 = v2 - v1;
+    Vector2D e2 = v3 - v2;
+    Vector2D e3 = v1 - v3;
+    // normal vectors
+    Vector2D n1 = Vector2D(-e1.y, e1.x);
+    Vector2D n2 = Vector2D(-e2.y, e2.x);
+    Vector2D n3 = Vector2D(-e3.y, e3.x);
+    // point vectors
+    Vector2D p1 = p - v1;
+    Vector2D p2 = p - v2;
+    Vector2D p3 = p - v3;
+    // compute dot product
+    bool inside = dot(p1, n1) >= 0 && dot(p2, n2) >= 0 && dot(p3, n3) >= 0;
+    bool outside = dot(p1, n1) <= 0 && dot(p2, n2) <= 0 && dot(p3, n3) <= 0;
+    
+    return (inside || outside);
+}
+
   // Rasterize a triangle.
   void RasterizerImp::rasterize_triangle(float x0, float y0,
     float x1, float y1,
     float x2, float y2,
     Color color) {
-    // TODO: Task 1: Implement basic triangle rasterization here, no supersampling
-
+      // Task 1: Implement basic triangle rasterization here, no supersampling
+      // define the x-y values of bounding box for the triangles
+      float minX = std::min({x0, x1, x2});
+      float minY = std::min({y0, y1, y2});
+      float maxX = std::max({x0, x1, x2});
+      float maxY = std::max({y0, y1, y2});
+      // loop through the bouding box and fill pixel if is_inside test passes
+//      for (int x = minX; x < maxX; ++x) {
+//          for (int y = minY; y < maxY; ++y) {
+//              if (is_inside(x-0.5, y-0.5, x0, y0, x1, y1, x2, y2)) {
+//                  fill_pixel(x, y, color);
+//              }
+//          }
+//      }
     // TODO: Task 2: Update to implement super-sampled rasterization
-
-
-
+      int sqrt_r = (int)floor(sqrt(sample_rate));
+      for (int y = minY; y < maxY; ++y) {
+          for (int x = minX; x < maxX; ++x) {
+              for (int j = 0; j < sqrt_r; ++j) {
+                  for (int i = 0; i < sqrt_r; ++i) {
+                      if (is_inside(x + ((float(i) + 0.5) / sqrt_r), y + ((float(j) + 0.5) / sqrt_r), x0, y0, x1, y1, x2, y2)) {
+                          sample_buffer[(y * width + x) * sample_rate + i + j * sqrt_r] = color;
+                      }
+                  }
+              }
+          }
+      }
   }
+
+Vector3D barycentric(float x, float y, float x0, float y0, float x1, float y1, float x2, float y2) {
+    float alpha = (-(x-x1)*(y2-y1)+(y-y1)*(x2-x1))/(-(x0-x1)*(y2-y1)+(y0-y1)*(x2-x1));
+    float beta = (-(x-x2)*(y0-y2)+(y-y2)*(x0-x2))/(-(x1-x2)*(y0-y2)+(y1-y2)*(x0-x2));
+    float gamma = 1 - alpha - beta;
+    return Vector3D(alpha, beta, gamma);
+}
 
 
   void RasterizerImp::rasterize_interpolated_color_triangle(float x0, float y0, Color c0,
@@ -84,10 +141,24 @@ namespace CGL {
     float x2, float y2, Color c2)
   {
     // TODO: Task 4: Rasterize the triangle, calculating barycentric coordinates and using them to interpolate vertex colors across the triangle
-    // Hint: You can reuse code from rasterize_triangle
-
-
-
+      float minX = std::min({x0, x1, x2});
+      float minY = std::min({y0, y1, y2});
+      float maxX = std::max({x0, x1, x2});
+      float maxY = std::max({y0, y1, y2});
+      int sqrt_r = (int)floor(sqrt(sample_rate));
+      for (int y = minY; y < maxY; ++y) {
+          for (int x = minX; x < maxX; ++x) {
+              for (int j = 0; j < sqrt_r; ++j) {
+                  for (int i = 0; i < sqrt_r; ++i) {
+                      if (is_inside(x + ((float(i) + 0.5) / sqrt_r), y + ((float(j) + 0.5) / sqrt_r), x0, y0, x1, y1, x2, y2)) {
+                          Vector3D bcoord = barycentric(x, y, x0, y0, x1, y1, x2, y2);
+                          Color interp_color = bcoord.x * c0 + bcoord.y * c1 + bcoord.z * c2;
+                          sample_buffer[(y * width + x) * sample_rate + i + j * sqrt_r] = interp_color;
+                      }
+                  }
+              }
+          }
+      }
   }
 
 
@@ -96,13 +167,47 @@ namespace CGL {
     float x2, float y2, float u2, float v2,
     Texture& tex)
   {
-    // TODO: Task 5: Fill in the SampleParams struct and pass it to the tex.sample function.
-    // TODO: Task 6: Set the correct barycentric differentials in the SampleParams struct.
-    // Hint: You can reuse code from rasterize_triangle/rasterize_interpolated_color_triangle
-
-
-
-
+    // TODO: Task 5:
+      float minX = std::min({x0, x1, x2});
+      float minY = std::min({y0, y1, y2});
+      float maxX = std::max({x0, x1, x2});
+      float maxY = std::max({y0, y1, y2});
+      SampleParams sample;
+      sample.lsm = lsm;
+      sample.psm = psm;
+      double data[] = {u0, u1, u2, v0, v1, v2, 1, 1, 1};
+      Matrix3x3 m_texture = Matrix3x3(data);
+      int sqrt_r = (int)floor(sqrt(sample_rate));
+      for (int y = minY; y < maxY; ++y) {
+          for (int x = minX; x < maxX; ++x) {
+              for (int j = 0; j < sqrt_r; ++j) {
+                  for (int i = 0; i < sqrt_r; ++i) {
+                      if (is_inside(x + ((float(i) + 0.5) / sqrt_r), y + ((float(j) + 0.5) / sqrt_r), x0, y0, x1, y1, x2, y2)) {
+                          Vector3D b_coord = barycentric(x, y, x0, y0, x1, y1, x2, y2);
+                          Vector3D b_coord_dx = barycentric(x+1, y, x0, y0, x1, y1, x2, y2);
+                          Vector3D b_coord_dy = barycentric(x, y+1, x0, y0, x1, y1, x2, y2);
+                          Vector3D ts = m_texture * b_coord;
+                          Vector3D ts_dx = m_texture * b_coord_dx;
+                          Vector3D ts_dy = m_texture * b_coord_dy;
+                          Vector2D uv = Vector2D(ts.x, ts.y);
+                          Vector2D uv_dx = Vector2D(ts_dx.x, ts_dy.y);
+                          Vector2D uv_dy = Vector2D(ts_dy.x, ts_dy.y);
+                          // TODO: Task 6: Set the correct barycentric differentials in the SampleParams struct.
+                          sample.p_uv = uv;
+                          sample.p_dx_uv = uv_dx - uv;
+                          sample.p_dy_uv = uv_dy - uv;
+                          //                          if (psm == P_NEAREST) {
+                          //                              c = tex.sample_nearest(uv, 0);
+                          //                          } else if (psm == P_LINEAR) {
+                          //                              c = tex.sample_bilinear(uv, 0);
+                          //                          }
+                          Color c = tex.sample(sample);
+                          sample_buffer[(y * width + x) * sample_rate + i + j * sqrt_r] = c;
+                      }
+                  }
+              }
+          }
+      }
   }
 
   void RasterizerImp::set_sample_rate(unsigned int rate) {
@@ -111,7 +216,7 @@ namespace CGL {
     this->sample_rate = rate;
 
 
-    this->sample_buffer.resize(width * height, Color::White);
+    this->sample_buffer.resize(width * height * sample_rate, Color::White);
   }
 
 
@@ -123,9 +228,7 @@ namespace CGL {
     this->width = width;
     this->height = height;
     this->rgb_framebuffer_target = rgb_framebuffer;
-
-
-    this->sample_buffer.resize(width * height, Color::White);
+    this->sample_buffer.resize(width * height * sample_rate, Color::White);
   }
 
 
@@ -146,14 +249,19 @@ namespace CGL {
 
     for (int x = 0; x < width; ++x) {
       for (int y = 0; y < height; ++y) {
-        Color col = sample_buffer[y * width + x];
-
-        for (int k = 0; k < 3; ++k) {
-          this->rgb_framebuffer_target[3 * (y * width + x) + k] = (&col.r)[k] * 255;
-        }
+          Color avg = Color();
+          for (int i = 0; i < sample_rate; ++i) {
+              Color curSample = sample_buffer[(y * width + x) * sample_rate + i];
+              avg += curSample;
+          }
+          avg.r /= sample_rate;
+          avg.g /= sample_rate;
+          avg.b /= sample_rate;
+          for (int k = 0; k < 3; ++k) {
+              this->rgb_framebuffer_target[3 * (y * width + x) + k] = (&avg.r)[k] * 255;
+          }
       }
     }
-
   }
 
   Rasterizer::~Rasterizer() { }
